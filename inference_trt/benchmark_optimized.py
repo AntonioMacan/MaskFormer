@@ -12,14 +12,12 @@ def run_benchmark(engine, data_loader, n_warmup=50, n_inference=180):
     with torch.no_grad():
         for i in range(n_warmup):
             try:
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
             except StopIteration:
                 loader_iter = iter(data_loader)
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
 
-            image_tensors = [item["image"] for item in batch['images']]
-            batched_tensor = torch.stack(image_tensors)
-            input_data = batched_tensor.numpy().astype(np.float32)
+            input_data = torch.stack(images).numpy().astype(np.float32)
             
             _ = engine.run(input_data)
     torch.cuda.synchronize()
@@ -30,15 +28,13 @@ def run_benchmark(engine, data_loader, n_warmup=50, n_inference=180):
         for i in range(n_inference):
             # Get next image (with cycling if needed)
             try:
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
             except StopIteration:
                 loader_iter = iter(data_loader)
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
             
             # Prepare input data
-            image_tensors = [item["image"] for item in batch['images']]
-            batched_tensor = torch.stack(image_tensors)
-            input_data = batched_tensor.numpy().astype(np.float32)
+            input_data = torch.stack(images).numpy().astype(np.float32)
             
             # Measure inference time
             start_time = perf_counter()

@@ -59,8 +59,7 @@ class CityscapesSimpleDataset:
 def prepare_data(root_path, subset='val', num_images=None, batch_size=1, image_size=(512, 1024)):    
     transform = transforms.Compose([
         transforms.Resize(image_size),
-        transforms.ToTensor(),
-        transforms.Lambda(lambda x: x * 255.0)
+        transforms.PILToTensor(),
     ])
     
     dataset = CityscapesSimpleDataset(
@@ -74,13 +73,10 @@ def prepare_data(root_path, subset='val', num_images=None, batch_size=1, image_s
     
     # Simple collate function
     def collate_fn(batch):
-        images = [{"image": item['image']} for item in batch]
+        images = [item['image'] for item in batch]
         paths = [item['path'] for item in batch]
 
-        return {
-            'images': images,
-            'paths': paths,
-        }
+        return images, paths
     
     loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
     
@@ -88,18 +84,14 @@ def prepare_data(root_path, subset='val', num_images=None, batch_size=1, image_s
 
 
 def save_segmentation_result(predictions, output_path):
-    # Create a colored image from the segmentation map
-    colored_pred = np.zeros((predictions.shape[0], predictions.shape[1], 3), dtype=np.uint8)
-    
-    # Apply the colormap - only use the first 19 valid classes (trainId 0-18)
-    # MaskFormer already outputs in trainId space
-    for class_idx in range(min(19, len(CITYSCAPES_COLORMAP))):
-        colored_pred[predictions == class_idx] = CITYSCAPES_COLORMAP[class_idx]
-    
-    # Handle any pixels with class labels outside the expected range
-    mask_valid = (predictions < 19) & (predictions >= 0)
-    colored_pred[~mask_valid] = (0, 0, 0)  # Set invalid pixels to black
-    
-    # Save as image
-    colored_pred_img = Image.fromarray(colored_pred)
-    colored_pred_img.save(output_path)
+    h, w = predictions.shape
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+
+    for cls_id, color in enumerate(CITYSCAPES_COLORMAP):
+        rgb[predictions == cls_id] = color
+
+    # invalide trainIds ➜ black
+    mask_valid = (predictions >= 0) & (predictions < len(CITYSCAPES_COLORMAP))
+    rgb[~mask_valid] = (0, 0, 0)
+
+    Image.fromarray(rgb).save(output_path)

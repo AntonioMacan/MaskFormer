@@ -33,11 +33,12 @@ def run_benchmark(model, data_loader, n_warmup=50, n_inference=180):
     with torch.no_grad():
         for i in range(n_warmup):
             try:
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
             except StopIteration:
                 loader_iter = iter(data_loader)
-                batch = next(loader_iter)
-            outputs = model(batch['images'])
+                images, paths = next(loader_iter)
+            input_data = [{"image": image} for image in images]
+            outputs = model(input_data)
     torch.cuda.synchronize()
 
     print(f"[INFO] Measuring time for {n_inference} inferences...")
@@ -45,14 +46,15 @@ def run_benchmark(model, data_loader, n_warmup=50, n_inference=180):
     with torch.no_grad():
         for i in range(n_inference):
             try:
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
             except StopIteration:
                 loader_iter = iter(data_loader)
-                batch = next(loader_iter)
+                images, paths = next(loader_iter)
 
             # Measure inference time
             start_time = perf_counter()
-            outputs = model(batch['images'])
+            input_data = [{"image": image} for image in images]
+            outputs = model(input_data)
             end_time = perf_counter()
             times.append(end_time - start_time)
     

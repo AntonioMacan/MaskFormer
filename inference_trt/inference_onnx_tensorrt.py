@@ -55,13 +55,11 @@ def main():
     
     # Load test image
     print(f"[INFO] Loading dataset from {args.dataset_path}...")
-    data_loader = prepare_data(args.dataset_path, 'val', 1, (args.height, args.width))
+    data_loader = prepare_data(args.dataset_path, 'val', num_images=1, image_size=(args.height, args.width))
     loader_iter = iter(data_loader)
-    batch = next(loader_iter)
+    images, paths = next(loader_iter)
 
-    image_tensors = [item["image"] for item in batch['images']]
-    batched_tensor = torch.stack(image_tensors)
-    input_data = batched_tensor.numpy().astype(np.float32)
+    input_data = torch.stack(images).numpy().astype(np.float32)
     
     # Run single inference
     print("[INFO] Running inference...")
