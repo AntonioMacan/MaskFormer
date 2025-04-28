@@ -51,3 +51,7 @@ _darcs
 /projects/*/datasets
 /models
 /snippet
+
+# other
+engine_cache
+onnx_models
