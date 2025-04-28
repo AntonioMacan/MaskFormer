@@ -84,7 +84,7 @@ def main():
     with torch.no_grad():
         _ = wrapped_model(dummy_input)
     
-    output_path = f'inference_trt/trt_model_{args.height}x{args.width}.onnx'
+    output_path = args.output if args.output else f'trt/onnx_models/trt_model_{args.height}x{args.width}.onnx'
 
     # Export model to ONNX format
     print(f"Exporting model to ONNX format: {output_path}")

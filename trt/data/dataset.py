@@ -1,12 +1,7 @@
-import numpy as np
 from PIL import Image
-import torch
 from pathlib import Path
-from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 
-
-# Cityscapes color map
 CITYSCAPES_COLORMAP = [
     (128, 64, 128),   # road
     (244, 35, 232),   # sidewalk
@@ -29,8 +24,7 @@ CITYSCAPES_COLORMAP = [
     (119, 11, 32),    # bicycle
 ]
 
-
-class CityscapesSimpleDataset:
+class CityscapesSimpleDataset(Dataset):
     """Simplified Cityscapes dataset loader for inference"""
     
     def __init__(self, root_path, subset='val', transform=None):
@@ -54,44 +48,3 @@ class CityscapesSimpleDataset:
             'image': image,
             'path': str(img_path)
         }
-
-
-def prepare_data(root_path, subset='val', num_images=None, batch_size=1, image_size=(512, 1024)):    
-    transform = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.PILToTensor(),
-    ])
-    
-    dataset = CityscapesSimpleDataset(
-        root_path, 
-        subset=subset,
-        transform=transform
-    )
-    
-    if num_images and num_images < len(dataset):
-        dataset = torch.utils.data.Subset(dataset, list(range(num_images)))
-    
-    # Simple collate function
-    def collate_fn(batch):
-        images = [item['image'] for item in batch]
-        paths = [item['path'] for item in batch]
-
-        return images, paths
-    
-    loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
-    
-    return loader
-
-
-def save_segmentation_result(predictions, output_path):
-    h, w = predictions.shape
-    rgb = np.zeros((h, w, 3), dtype=np.uint8)
-
-    for cls_id, color in enumerate(CITYSCAPES_COLORMAP):
-        rgb[predictions == cls_id] = color
-
-    # invalide trainIds ➜ black
-    mask_valid = (predictions >= 0) & (predictions < len(CITYSCAPES_COLORMAP))
-    rgb[~mask_valid] = (0, 0, 0)
-
-    Image.fromarray(rgb).save(output_path)
