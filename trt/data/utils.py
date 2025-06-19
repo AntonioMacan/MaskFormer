@@ -4,22 +4,23 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from .dataset import CityscapesSimpleDataset, CITYSCAPES_COLORMAP
 
+
 def prepare_data(root_path, subset='val', num_images=None, batch_size=1, image_size=(512, 1024)):    
     transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.PILToTensor(),
     ])
-    
+
     dataset = CityscapesSimpleDataset(root_path, subset, transform)
-    
+
     if num_images and num_images < len(dataset):
         dataset = Subset(dataset, list(range(num_images)))
     
-    # Simple collate function
     def collate_fn(batch):
         images = [item['image'] for item in batch]
         paths = [item['path'] for item in batch]
-        return images, paths
+        labels = [item['label'] for item in batch]
+        return images, paths, labels
     
     loader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
     

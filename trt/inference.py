@@ -122,7 +122,7 @@ def main():
 
     dataset_root = Path(args.dataset_path)
 
-    for images, paths in data_loader:
+    for images, paths, labels in data_loader:
         input_data = engine.prepare_input(images)
         output = engine.run(input_data)
         logits_batch = engine.get_logits_from_output(output)
