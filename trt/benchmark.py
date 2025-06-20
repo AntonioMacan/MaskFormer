@@ -6,6 +6,7 @@ import torch
 from time import perf_counter
 from torch.nn.functional import interpolate
 from torchmetrics import JaccardIndex
+from panopticapi.evaluation import PQStat
 
 from trt.engines.tensorrt_engine import TensorRTEngine
 from trt.engines.tensorrt_onnx_engine import TensorRTONNXEngine
@@ -22,6 +23,7 @@ def parse_args():
     parser.add_argument('--warmup', type=int, default=50)
     parser.add_argument('--iterations', type=int, default=200)
     parser.add_argument('--engine_cache_dir', type=str, default='trt/engine_cache')
+    parser.add_argument('--eval_pq', action='store_true', help='Evaluate Panoptic Quality (PQ)')
     return parser.parse_args()
 
 
@@ -75,6 +77,91 @@ def evaluate_miou(engine, data_loader, num_classes=19):
     return miou, pixel_acc
 
 
+def evaluate_pq(engine, data_loader, num_classes=19, ignore_label=255):
+    print("[INFO] Evaluating PQ on validation set...")
+    pq_stat = PQStat()
+    OFFSET = 256 * 256 * 256
+
+    for images, paths, labels in data_loader:
+        input_data = engine.prepare_input(images)
+        output = engine.run(input_data)
+        logits_batch = engine.get_logits_from_output(output)
+
+        for logits, gt in zip(logits_batch, labels):
+            pred = np.argmax(logits, axis=0).astype(np.int64)
+            gt = gt.cpu().numpy().astype(np.int64)
+
+            if pred.shape != gt.shape:
+                pred = torch.from_numpy(logits).unsqueeze(0)
+                pred = interpolate(pred, size=gt.shape, mode='nearest')
+                pred = torch.argmax(pred.squeeze(0), dim=0).numpy().astype(np.int64)
+
+            valid = gt != ignore_label
+            pred[~valid] = ignore_label
+
+            gt_ids = np.unique(gt[valid])
+            pred_ids = np.unique(pred[valid])
+
+            gt_ann = {'segments_info': []}
+            for id_ in gt_ids:
+                mask = gt == id_
+                gt_ann['segments_info'].append({
+                    "id": id_,
+                    "category_id": id_,
+                    "area": mask.sum(),
+                    "iscrowd": 0
+                })
+
+            pred_ann = {'segments_info': []}
+            for id_ in pred_ids:
+                mask = pred == id_
+                pred_ann['segments_info'].append({
+                    "id": id_,
+                    "category_id": id_,
+                    "area": mask.sum(),
+                    "iscrowd": 0
+                })
+
+            pan_gt_pred = gt.astype(np.uint64) * OFFSET + pred.astype(np.uint64)
+            intersect_ids, intersect_counts = np.unique(pan_gt_pred, return_counts=True)
+
+            gt_segms = {el['id']: el for el in gt_ann['segments_info']}
+            pred_segms = {el['id']: el for el in pred_ann['segments_info']}
+
+            matched_gt = set()
+            matched_pred = set()
+
+            for label, count in zip(intersect_ids, intersect_counts):
+                gt_id = label // OFFSET
+                pred_id = label % OFFSET
+                if gt_id == ignore_label or pred_id == ignore_label:
+                    continue
+                if gt_id not in gt_segms or pred_id not in pred_segms:
+                    continue
+                if gt_id != pred_id:
+                    continue
+                union = gt_segms[gt_id]['area'] + pred_segms[pred_id]['area'] - count
+                iou = count / union
+                if iou > 0.5:
+                    pq_stat[gt_id].tp += 1
+                    pq_stat[gt_id].iou += iou
+                    matched_gt.add(gt_id)
+                    matched_pred.add(pred_id)
+
+            for gt_id in gt_segms:
+                if gt_id not in matched_gt:
+                    pq_stat[gt_id].fn += 1
+            for pred_id in pred_segms:
+                if pred_id not in matched_pred:
+                    pq_stat[pred_id].fp += 1
+
+    pq_results, _ = pq_stat.pq_average(
+        {i: {"id": i, "isthing": 0, "name": str(i)} for i in range(num_classes)},
+        isthing=False
+    )
+    return pq_results
+
+
 def run_benchmark(engine, data_loader, n_warmup=50, n_inference=180):
     loader_iter = iter(data_loader)
 
@@ -118,7 +205,6 @@ def run_benchmark(engine, data_loader, n_warmup=50, n_inference=180):
 def main():
     args = parse_args()
     sizes = [(128, 256), (256, 512), (512, 1024)]
-    # sizes = [(512, 1024)]
     results = []
 
     for size in sizes:
@@ -155,7 +241,6 @@ def main():
         bench_result = run_benchmark(engine, data_loader, args.warmup, args.iterations)
         bench_result['size'] = size
 
-        # === Pixel agreement with PyTorch (engine output match) ===
         if args.engine != 'pytorch':
             print("[INFO] Comparing predictions with PyTorch baseline...")
             torch_engine = PyTorchEngine()
@@ -179,15 +264,20 @@ def main():
             ]
             bench_result['engine_agreement'] = sum(pixel_accs) / len(pixel_accs)
 
-        # === mIoU evaluation ===
         eval_loader = prepare_data(
             args.dataset_path, 'val',
             image_size=size,
             batch_size=1,
         )
-        miou, pixacc = evaluate_miou(engine, eval_loader)
-        bench_result['miou'] = miou
-        bench_result['pixel_acc_eval'] = pixacc
+        # miou, pixacc = evaluate_miou(engine, eval_loader)
+        # bench_result['miou'] = miou
+        # bench_result['pixel_acc_eval'] = pixacc
+
+        if args.eval_pq:
+            pq_res = evaluate_pq(engine, eval_loader)
+            bench_result['pq'] = pq_res['pq'] * 100
+            bench_result['sq'] = pq_res['sq'] * 100
+            bench_result['rq'] = pq_res['rq'] * 100
 
         results.append(bench_result)
         print("=== Done ===")
@@ -197,9 +287,11 @@ def main():
         print(f"Inference time: {result['total_time']:.2f} s")
         print(f"Mean time: {result['mean_time'] * 1000:.2f} ms")
         print(f"FPS: {result['fps']:.2f}")
-        print(f"mIoU: {result['miou']:.2f}%")
-        if 'engine_agreement' in result:
-            print(f"Pixel Agreement vs PyTorch: {result['engine_agreement'] * 100:.2f}%")
+        # print(f"mIoU: {result['miou']:.2f}%")
+        # if 'engine_agreement' in result:
+            # print(f"Pixel Agreement vs PyTorch: {result['engine_agreement'] * 100:.2f}%")
+        if 'pq' in result:
+            print(f"PQ: {result['pq']:.2f}%, SQ: {result['sq']:.2f}%, RQ: {result['rq']:.2f}%")
 
 
 if __name__ == "__main__":
